@@ -5,6 +5,7 @@ Single Responsibility: Handles all MCP server communication
 
 import asyncio
 import logging
+import aiohttp
 from typing import Dict, Any, Optional
 
 from mcp import ClientSession
@@ -22,33 +23,84 @@ class MCPClient:
     def __init__(self, config: AWSApiMCPAdapterConfig):
         self.config = config
 
-    async def connect_and_execute(self, action: str, parameters: Optional[Dict[str, Any]] = None) -> MCPResponse:
-        """Execute MCP action with proper error handling and timeout"""
-        logger.info(f"Starting MCP connect_and_execute with action '{action}' and parameters {parameters}")
+    async def connect_and_execute(self, tool_name: str, parameters: Optional[Dict[str, Any]] = None) -> MCPResponse:
+        """
+        Dispatch to either the HTTP/JSON-RPC endpoint (for REST-style tools)
+        or to the streamable MCP protocol for legacy actions or list_tools.
+        """
+        # Map tool_name to REST endpoint path for HTTP/JSON-RPC tools
+        endpoint_map = {
+            "describe_log_groups": "/describe-log-groups",
+            "analyze_log_group": "/analyze-log-group",
+            "get_metric_data": "/get-metric-data",
+            "get_metric_metadata": "/get-metric-metadata",
+            "get_recommended_metric_alarms": "/get-recommended-metric-alarms",
+            "get_active_alarms": "/get-active-alarms",
+            "get_alarm_history": "/get-alarm-history"
+        }
+        path = endpoint_map.get(tool_name)
+        if path:
+            # Use HTTP/JSON-RPC endpoint for these tools
+            return await self.call_jsonrpc_http_endpoint(tool_name, parameters)
+        else:
+            # Fallback to legacy protocol for "list_tools" or others
+            return await self._connect_and_execute_inner(tool_name, parameters)
+
+    async def call_jsonrpc_http_endpoint(self, tool_name: str, parameters: Optional[Dict[str, Any]] = None) -> MCPResponse:
+        """Call the HTTP/JSON-RPC endpoint for REST-style tools."""
+        endpoint_map = {
+            "describe_log_groups": "/describe-log-groups",
+            "analyze_log_group": "/analyze-log-group",
+            "get_metric_data": "/get-metric-data",
+            "get_metric_metadata": "/get-metric-metadata",
+            "get_recommended_metric_alarms": "/get-recommended-metric-alarms",
+            "get_active_alarms": "/get-active-alarms",
+            "get_alarm_history": "/get-alarm-history",
+        }
+        path = endpoint_map.get(tool_name)
+        if not path:
+            logger.error(f"Tool '{tool_name}' is not mapped to an endpoint")
+            return MCPResponse.error_response(
+                f"Unknown tool: {tool_name}",
+                ErrorType.VALIDATION_ERROR
+            )
+        url = self.config.mcp_server_url.rstrip("/") + path
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json"
+        }
+        body = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": tool_name,
+            "params": parameters or {}
+        }
+        timeout = aiohttp.ClientTimeout(total=self.config.connection_timeout)
         try:
-            # Apply timeout wrapper for safety
-            return await asyncio.wait_for(
-                self._connect_and_execute_inner(action, parameters),
-                timeout=self.config.connection_timeout + 5  # Add small buffer
-            )
-        except asyncio.TimeoutError:
-            logger.error(f"MCP operation timed out after {self.config.connection_timeout + 5} seconds")
-            return MCPResponse.error_response(
-                "MCP session timeout",
-                ErrorType.CONNECTION_ERROR
-            )
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, json=body, headers=headers) as resp:
+                    try:
+                        data = await resp.json()
+                    except Exception:
+                        data = await resp.text()
+                    if resp.status == 200:
+                        logger.info(f"Received success response from MCP server for {tool_name}")
+                        return MCPResponse.success_response(data)
+                    else:
+                        logger.error(f"MCP server returned error: {data}")
+                        return MCPResponse.error_response(
+                            data.get("error", "Unknown error") if isinstance(data, dict) else str(data),
+                            ErrorType.MCP_SERVER_ERROR
+                        )
         except Exception as e:
-            logger.error(f"MCP Client error in connect_and_execute: {str(e)}")
-            logger.error(f"Error type: {type(e).__name__}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error connecting to MCP server: {str(e)}")
             return MCPResponse.error_response(
-                "Failed to communicate with AWS API MCP server",
+                f"Connection error: {str(e)}",
                 ErrorType.CONNECTION_ERROR
             )
 
     async def _connect_and_execute_inner(self, action: str, parameters: Optional[Dict[str, Any]] = None) -> MCPResponse:
-        """Inner connection execution with detailed logging"""
+        """Inner connection execution with detailed logging for legacy protocol"""
         # Add minimal headers required for MCP protocol
         headers = {
             "Accept": "application/json",
@@ -170,7 +222,8 @@ class MCPClient:
     async def health_check(self) -> bool:
         """Perform a health check on the AWS API MCP server"""
         try:
-            result = await self.connect_and_execute("list_tools")
+            # Use describe_log_groups as a health check for HTTP/JSON-RPC endpoint
+            result = await self.connect_and_execute("describe_log_groups", {"region": "us-east-1"})
             return result.success
         except Exception as e:
             logger.error(f"Health check failed: {str(e)}")

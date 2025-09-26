@@ -32,19 +32,22 @@ class ListToolsHandler(RouteHandler):
 
 
 class ToolCallHandler(RouteHandler):
-    """Handler for calling specific MCP tools"""
-
-    def __init__(self, tool_name: str):
+    def __init__(self, tool_name: str, rest_style: bool = True):
         self.tool_name = tool_name
+        self.rest_style = rest_style
 
     async def handle(self, mcp_client: MCPClient, parameters: Dict[str, Any]) -> MCPResponse:
-        """Call specific MCP tool with provided parameters"""
         logger.info(f"Handling tool call for '{self.tool_name}'")
         try:
-            return await mcp_client.connect_and_execute("call_tool", {
-                "tool_name": self.tool_name,
-                "arguments": parameters
-            })
+            if self.rest_style:
+                # For REST-style endpoint, send params directly
+                return await mcp_client.connect_and_execute(self.tool_name, parameters)
+            else:
+                # For generic tool call endpoint (if needed)
+                return await mcp_client.connect_and_execute("call_tool", {
+                    "tool_name": self.tool_name,
+                    "arguments": parameters
+                })
         except Exception as e:
             logger.error(f"ToolCallHandler error for {self.tool_name}: {str(e)}")
             from .adapter_types import MCPResponse, ErrorType
