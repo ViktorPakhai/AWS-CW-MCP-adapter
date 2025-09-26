@@ -1,0 +1,232 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "AWS CloudWatch MCP Server API",
+    "version": "1.0.0",
+    "description": "API surface exposed by the AWS CloudWatch MCP Server. Provides read-only CloudWatch capabilities such as listing log groups, analyzing logs, retrieving metric data and metadata, alarm recommendations, active alarms, and alarm history."
+  },
+  "paths": {
+    "/describe-log-groups": {
+      "post": {
+        "summary": "List CloudWatch log groups",
+        "description": "Returns CloudWatch log groups and any saved queries associated with them.",
+        "operationId": "describeLogGroups",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "log_group_name_prefix": { "type": "string", "description": "Exact prefix filter for log group names" },
+                  "log_group_class": { "type": "string", "enum": ["STANDARD", "INFREQUENT_ACCESS"] },
+                  "include_linked_accounts": { "type": "boolean" },
+                  "account_identifiers": { "type": "array", "items": { "type": "string" } },
+                  "region": { "type": "string", "example": "us-east-1" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Log groups listed successfully",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    },
+    "/analyze-log-group": {
+      "post": {
+        "summary": "Analyze a log group for anomalies and patterns",
+        "description": "Runs analysis for anomalies and common message patterns over a time window.",
+        "operationId": "analyzeLogGroup",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "log_group_arn": { "type": "string", "description": "ARN of the log group" },
+                  "start_time": { "type": "string", "description": "ISO 8601 start time" },
+                  "end_time": { "type": "string", "description": "ISO 8601 end time" },
+                  "region": { "type": "string", "example": "us-east-1" }
+                },
+                "required": ["log_group_arn", "start_time", "end_time"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Analysis completed", "content": { "application/json": { "schema": { "type": "object" } } } }
+        }
+      }
+    },
+    "/get-metric-data": {
+      "post": {
+        "summary": "Get CloudWatch metric data",
+        "description": "Retrieves metric datapoints via GetMetricData or Metrics Insights (auto-selected by arguments).",
+        "operationId": "getMetricData",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "namespace": { "type": "string", "example": "AWS/EC2" },
+                  "metric_name": { "type": "string", "example": "CPUUtilization" },
+                  "start_time": { "type": "string" },
+                  "end_time": { "type": "string" },
+                  "dimensions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": { "name": { "type": "string" }, "value": { "type": "string" } },
+                      "required": ["name", "value"]
+                    }
+                  },
+                  "statistic": { "type": "string", "enum": ["AVG", "COUNT", "MAX", "MIN", "SUM", "Average", "Sum", "Maximum", "Minimum", "SampleCount"] },
+                  "target_datapoints": { "type": "integer", "minimum": 1 },
+                  "group_by_dimension": { "type": "string" },
+                  "schema_dimension_keys": { "type": "array", "items": { "type": "string" } },
+                  "limit": { "type": "integer", "minimum": 1 },
+                  "sort_order": { "type": "string", "enum": ["ASC", "DESC"] },
+                  "order_by_statistic": { "type": "string", "enum": ["AVG", "COUNT", "MAX", "MIN", "SUM"] },
+                  "region": { "type": "string" }
+                },
+                "required": ["namespace", "metric_name", "start_time"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Metric data retrieved", "content": { "application/json": { "schema": { "type": "object" } } } }
+        }
+      }
+    },
+    "/get-metric-metadata": {
+      "post": {
+        "summary": "Get metric metadata",
+        "description": "Returns description, unit, and recommended statistics for a metric.",
+        "operationId": "getMetricMetadata",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "namespace": { "type": "string" },
+                  "metric_name": { "type": "string" },
+                  "region": { "type": "string" }
+                },
+                "required": ["namespace", "metric_name"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Metric metadata returned", "content": { "application/json": { "schema": { "type": "object" } } } }
+        }
+      }
+    },
+    "/get-recommended-metric-alarms": {
+      "post": {
+        "summary": "Get recommended alarms for a metric",
+        "description": "Suggests CloudWatch alarm configurations for a metric scoped by optional dimensions.",
+        "operationId": "getRecommendedMetricAlarms",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "namespace": { "type": "string" },
+                  "metric_name": { "type": "string" },
+                  "dimensions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": { "name": { "type": "string" }, "value": { "type": "string" } },
+                      "required": ["name", "value"]
+                    }
+                  },
+                  "region": { "type": "string" }
+                },
+                "required": ["namespace", "metric_name"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Recommendations returned", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object" } } } } }
+        }
+      }
+    },
+    "/get-active-alarms": {
+      "get": {
+        "summary": "List alarms currently in ALARM state",
+        "description": "Returns metric and composite alarms that are in ALARM state.",
+        "operationId": "getActiveAlarms",
+        "parameters": [
+          { "in": "query", "name": "max_items", "schema": { "type": "integer", "minimum": 1 }, "required": false },
+          { "in": "query", "name": "region", "schema": { "type": "string" }, "required": false }
+        ],
+        "responses": {
+          "200": { "description": "Active alarms returned", "content": { "application/json": { "schema": { "type": "object" } } } }
+        }
+      }
+    },
+    "/get-alarm-history": {
+      "post": {
+        "summary": "Get alarm history",
+        "description": "Returns state transition history and suggested investigation windows for a CloudWatch alarm.",
+        "operationId": "getAlarmHistory",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "alarm_name": { "type": "string" },
+                  "start_time": { "type": "string" },
+                  "end_time": { "type": "string" },
+                  "history_item_type": { "type": "string", "enum": ["ConfigurationUpdate", "StateUpdate", "Action"] },
+                  "max_items": { "type": "integer", "minimum": 1 },
+                  "include_component_alarms": { "type": "boolean" },
+                  "region": { "type": "string" }
+                },
+                "required": ["alarm_name"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Alarm history returned", "content": { "application/json": { "schema": { "type": "object" } } } }
+        }
+      }
+    },
+    "/list-tools": {
+      "get": {
+        "summary": "List available CloudWatch MCP tools",
+        "description": "Returns a list and brief description of the CloudWatch tools exposed by this server.",
+        "operationId": "listTools",
+        "responses": { "200": { "description": "Tools listed", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check endpoint",
+        "description": "Simple health/status check for the CloudWatch MCP server.",
+        "operationId": "healthCheck",
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      }
+    }
+  }
+}
+
+
