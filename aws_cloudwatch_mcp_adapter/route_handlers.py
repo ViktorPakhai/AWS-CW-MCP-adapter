@@ -74,13 +74,13 @@ class RouteRegistry:
 
     def __init__(self):
         self._routes: Dict[str, RouteHandler] = {
-            "/describe-log-groups": ToolCallHandler("describe_log_groups"),
-            "/analyze-log-group": ToolCallHandler("analyze_log_group"),
-            "/get-metric-data": ToolCallHandler("get_metric_data"),
-            "/get-metric-metadata": ToolCallHandler("get_metric_metadata"),
-            "/get-recommended-metric-alarms": ToolCallHandler("get_recommended_metric_alarms"),
-            "/get-active-alarms": ToolCallHandler("get_active_alarms"),
-            "/get-alarm-history": ToolCallHandler("get_alarm_history"),
+            "/describe-log-groups": ToolCallHandler("describe_log_groups", rest_style=True),
+            "/analyze-log-group": ToolCallHandler("analyze_log_group", rest_style=True),
+            "/get-metric-data": ToolCallHandler("get_metric_data", rest_style=True),
+            "/get-metric-metadata": ToolCallHandler("get_metric_metadata", rest_style=True),
+            "/get-recommended-metric-alarms": ToolCallHandler("get_recommended_metric_alarms", rest_style=True),
+            "/get-active-alarms": ToolCallHandler("get_active_alarms", rest_style=True),
+            "/get-alarm-history": ToolCallHandler("get_alarm_history", rest_style=True),
             "/list-tools": ListToolsHandler(),
             "/health": ListToolsHandler(),
         }

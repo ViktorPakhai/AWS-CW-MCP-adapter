@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 class BedrockParameterProcessor:
     """Processes Bedrock Agent parameters into MCP format for AWS API calls"""
 
-    # Type converters for AWS API specific parameters
     TYPE_CONVERTERS: Dict[str, Callable[[str], Any]] = {
         'max_results': int,
+        'max_items': int,
         'timeout': int,
         'retries': int,
     }
@@ -22,13 +22,14 @@ class BedrockParameterProcessor:
     BOOLEAN_FIELDS = {
         'dry_run',
         'include_all',
+        'include_linked_accounts',
         'recursive',
         'force',
         'verbose'
     }
 
     def process_parameters(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Process Bedrock event parameters into clean dictionary"""
+        """Process Bedrock event parameters into clean dictionary with MCP context"""
         try:
             params_dict = {}
 
@@ -42,12 +43,37 @@ class BedrockParameterProcessor:
             if request_body:
                 self._process_request_body(request_body, params_dict)
 
-            logger.info(f"Processed parameters: {params_dict}")
+            # Add required MCP context if not present
+            if 'ctx' not in params_dict:
+                params_dict['ctx'] = self._create_default_context(event)
+
+            logger.info(f"Processed parameters with context: {params_dict}")
             return params_dict
 
         except Exception as e:
             logger.error(f"Parameter processing error: {str(e)}")
             raise
+
+    def _create_default_context(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create default MCP context object required by CloudWatch MCP server
+        
+        The Context schema typically includes:
+        - request_id: Unique identifier for the request
+        - source: Where the request came from
+        - timestamp: When the request was made
+        """
+        import time
+        
+        context = {
+            "request_id": event.get('requestId', event.get('messageId', f"req-{int(time.time())}")),
+            "source": "bedrock-agent",
+            "session_id": event.get('sessionId', 'default-session'),
+            "agent_id": event.get('agent', {}).get('id', 'unknown-agent')
+        }
+        
+        logger.info(f"Created default MCP context: {context}")
+        return context
 
     def _process_parameter_list(self, parameters: List[Dict], params_dict: Dict[str, Any]):
         """Process list of parameter objects"""
@@ -86,7 +112,7 @@ class BedrockParameterProcessor:
             except (ValueError, TypeError):
                 logger.warning(
                     f"Failed to convert {name}={value} to {self.TYPE_CONVERTERS[name].__name__}, keeping original")
-                params_dict[name] = value  # Keep original if conversion fails
+                params_dict[name] = value
         elif name in self.BOOLEAN_FIELDS:
             params_dict[name] = self._convert_to_boolean(value)
         else:
