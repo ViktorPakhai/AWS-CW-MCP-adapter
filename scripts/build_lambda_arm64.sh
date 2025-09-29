@@ -68,7 +68,8 @@ find "${BUILD_DIR}" -name "*.pyc" -delete || true
 find "${BUILD_DIR}" -name "__pycache__" -type d -exec rm -rf {} + || true
 find "${BUILD_DIR}" -name "*.dist-info" -type d -empty -delete || true
 
-ZIP_PATH="${DIST_DIR}/lambda_arm64.zip"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+ZIP_PATH="${DIST_DIR}/lambda_arm64_${TIMESTAMP}.zip"
 rm -f "${ZIP_PATH}" || true
 
 info "Creating deployment zip: ${ZIP_PATH}"
