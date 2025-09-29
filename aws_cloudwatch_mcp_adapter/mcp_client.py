@@ -2,10 +2,10 @@
 MCP client module for AWS API MCP Server communication
 Single Responsibility: Handles all MCP server communication
 """
-
 import asyncio
 import logging
 import aiohttp
+import json
 import uuid
 from typing import Dict, Any, Optional
 
@@ -17,17 +17,13 @@ from .adapter_types import MCPResponse, ErrorType
 
 logger = logging.getLogger(__name__)
 
-
 class MCPClient:
-    """Handles AWS API MCP server communication with proper JSON-RPC support"""
+    """Handles AWS API MCP server communication with proper JSON-RPC and SSE support"""
 
     def __init__(self, config: AWSApiMCPAdapterConfig):
         self.config = config
 
     async def connect_and_execute(self, tool_name: str, parameters: Optional[Dict[str, Any]] = None) -> MCPResponse:
-        """
-        Execute tool call using HTTP/JSON-RPC endpoint
-        """
         endpoint_map = {
             "describe_log_groups": "/describe-log-groups",
             "analyze_log_group": "/analyze-log-group",
@@ -37,31 +33,14 @@ class MCPClient:
             "get_active_alarms": "/get-active-alarms",
             "get_alarm_history": "/get-alarm-history"
         }
-        
         path = endpoint_map.get(tool_name)
         if path:
             return await self.call_jsonrpc_http_endpoint(tool_name, parameters)
         else:
-            # Fallback for list_tools or unknown operations
             logger.info(f"Tool '{tool_name}' not in endpoint map, using legacy protocol")
             return await self._connect_and_execute_legacy(tool_name, parameters)
 
-    async def get_session_id(self, session_url, headers, timeout):
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(session_url, headers=headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data.get("session_id")
-                    else:
-                        logger.error(f"Failed to get session ID: {await resp.text()}")
-                        return None
-        except Exception as e:
-            logger.error(f"Exception in get_session_id: {str(e)}")
-            return None        
-
     async def call_jsonrpc_http_endpoint(self, tool_name: str, parameters: Optional[Dict[str, Any]] = None) -> MCPResponse:
-        """Call the HTTP/JSON-RPC endpoint for REST-style tools with required initialize handshake."""
         endpoint_map = {
             "describe_log_groups": "/describe-log-groups",
             "analyze_log_group": "/analyze-log-group",
@@ -86,68 +65,59 @@ class MCPClient:
         }
         timeout = aiohttp.ClientTimeout(total=self.config.connection_timeout)
 
-        # Step 1: Get a valid session id
-        session_id = await self.get_session_id(session_url, headers, timeout)
-        if not session_id:
-            logger.error("Could not obtain valid session id from MCP /session endpoint.")
+        # Step 1: Get handshake from MCP server (no session id required)
+        handshake_result = await self.get_handshake(session_url, headers, timeout)
+        if not handshake_result:
+            logger.error("Could not obtain valid handshake from MCP /session endpoint.")
             return MCPResponse.error_response(
-                "Could not obtain valid session id from MCP /session endpoint.",
+                "Could not obtain valid handshake from MCP /session endpoint.",
                 ErrorType.CONNECTION_ERROR
             )
 
-        # Step 2: Initialize handshake
-        initialize_body = {
+        # Step 2: Actual tool call
+        tool_body = {
             "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
+            "id": 2,
+            "method": "tools/call",
             "params": {
-                "protocolVersion": "2.0",
-                "capabilities": {},
-                "clientInfo": {"name": "aws-cloudwatch-mcp-adapter", "version": "1.0"}
+                "name": tool_name,
+                "arguments": parameters or {}
             }
         }
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(
-                    url, json=initialize_body, headers={**headers, "mcp-session-id": session_id}
-                ) as init_resp:
-                    try:
-                        init_data = await init_resp.json()
-                    except Exception:
-                        init_data = await init_resp.text()
-                    if init_resp.status != 200:
-                        logger.error(f"Failed MCP initialize: {init_data}")
-                        return MCPResponse.error_response(
-                            "Failed MCP initialize",
-                            ErrorType.MCP_SERVER_ERROR
-                        )
-                    logger.info("MCP session initialized successfully")
-
-                # Step 3: Actual tool call
-                tool_body = {
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/call",
-                    "params": {
-                        "name": tool_name,
-                        "arguments": parameters or {}
-                    }
-                }
-                async with session.post(
-                    url, json=tool_body, headers={**headers, "mcp-session-id": session_id}
+                    url, json=tool_body, headers=headers
                 ) as resp:
                     try:
-                        data = await resp.json()
-                    except Exception:
-                        data = await resp.text()
-                    if resp.status == 200:
-                        logger.info(f"Received success response from MCP server for {tool_name}")
-                        return MCPResponse.success_response(data)
-                    else:
-                        logger.error(f"MCP server returned error: {data}")
+                        # If response is SSE, parse accordingly
+                        if resp.content_type == "text/event-stream":
+                            text = await resp.text()
+                            for line in text.splitlines():
+                                if line.startswith("data: "):
+                                    json_str = line[len("data: "):]
+                                    data = json.loads(json_str)
+                                    if resp.status == 200:
+                                        return MCPResponse.success_response(data)
+                                    else:
+                                        return MCPResponse.error_response(
+                                            data.get("error", "Unknown error") if isinstance(data, dict) else str(data),
+                                            ErrorType.MCP_SERVER_ERROR
+                                        )
+                        else:
+                            data = await resp.json()
+                            if resp.status == 200:
+                                return MCPResponse.success_response(data)
+                            else:
+                                return MCPResponse.error_response(
+                                    data.get("error", "Unknown error") if isinstance(data, dict) else str(data),
+                                    ErrorType.MCP_SERVER_ERROR
+                                )
+                    except Exception as ex:
+                        logger.error(f"Error parsing MCP tool call response: {ex}")
                         return MCPResponse.error_response(
-                            data.get("error", "Unknown error") if isinstance(data, dict) else str(data),
-                            ErrorType.MCP_SERVER_ERROR
+                            f"Error parsing MCP tool call response: {ex}",
+                            ErrorType.CONNECTION_ERROR
                         )
         except Exception as e:
             logger.error(f"Error connecting to MCP server: {str(e)}")
@@ -155,6 +125,51 @@ class MCPClient:
                 f"Connection error: {str(e)}",
                 ErrorType.CONNECTION_ERROR
             )
+
+    async def get_handshake(self, session_url, headers, timeout):
+        # Only handshake, do not use as a session id
+        try:
+            body = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2.0",
+                    "capabilities": {},
+                    "clientInfo": {"name": "aws-cloudwatch-mcp-adapter", "version": "1.0"}
+                }
+            }
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(session_url, json=body, headers=headers) as resp:
+                    text = await resp.text()
+                    logger.info(f"Session response: {text}")
+                    if resp.status == 200:
+                        # If mimetype is text/event-stream, extract JSON from 'data:' line
+                        if resp.content_type == "text/event-stream":
+                            for line in text.splitlines():
+                                if line.startswith("data: "):
+                                    json_str = line[len("data: "):]
+                                    try:
+                                        data = json.loads(json_str)
+                                        return data.get("result")
+                                    except Exception as ex:
+                                        logger.error(f"Failed to parse SSE JSON: {ex}")
+                                        return None
+                            logger.error("No 'data:' line found in SSE response")
+                            return None
+                        else:
+                            try:
+                                data = await resp.json()
+                                return data.get("result")
+                            except Exception as ex:
+                                logger.error(f"JSON decode error: {ex}; raw text: {text}")
+                                return None
+                    else:
+                        logger.error(f"Failed to get handshake: {text}")
+                        return None
+        except Exception as e:
+            logger.error(f"Exception in get_handshake: {str(e)}")
+            return None
 
     async def _connect_and_execute_legacy(self, action: str, parameters: Optional[Dict[str, Any]] = None) -> MCPResponse:
         """
