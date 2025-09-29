@@ -46,6 +46,20 @@ class MCPClient:
             logger.info(f"Tool '{tool_name}' not in endpoint map, using legacy protocol")
             return await self._connect_and_execute_legacy(tool_name, parameters)
 
+    async def get_session_id(self, session_url, headers, timeout):
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(session_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data.get("session_id")
+                    else:
+                        logger.error(f"Failed to get session ID: {await resp.text()}")
+                        return None
+        except Exception as e:
+            logger.error(f"Exception in get_session_id: {str(e)}")
+            return None        
+
     async def call_jsonrpc_http_endpoint(self, tool_name: str, parameters: Optional[Dict[str, Any]] = None) -> MCPResponse:
         """Call the HTTP/JSON-RPC endpoint for REST-style tools with required initialize handshake."""
         endpoint_map = {
